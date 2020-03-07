@@ -13,3 +13,9 @@
 
 # Dependency directories (remove the comment below to include it)
 # vendor/
+
+proxies.txt
+cloudflare-proxy-ban-checker
+bad.txt
+good.txt
+.idea
