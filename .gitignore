@@ -15,7 +15,7 @@
 # vendor/
 
 proxies.txt
-cloudflare-proxy-ban-checker
+proxy-checker
 bad.txt
 good.txt
 .idea

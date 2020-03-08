@@ -1,4 +1,4 @@
-module github.com/kangoo13/cloudflare-proxy-ban-checker
+module github.com/kangoo13/proxy-checker
 
 go 1.13
 
