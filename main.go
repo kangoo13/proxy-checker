@@ -17,7 +17,7 @@ func main() {
 		ProxyList       string `arg:"positional,required" help:"path to the proxyList"`
 		GoodProxiesPath string `default:"good.txt" help:"path to the good proxies identified"`
 		BadProxiesPath  string `default:"bad.txt" help:"path to the bad proxies identified"`
-		TimeoutProxy    int64  `default:"5" help:"timeout proxy duration"`
+		TimeoutProxy    int64  `default:"5" help:"timeout proxy duration in seconds"`
 	}
 
 	arg.MustParse(&inputArgs)

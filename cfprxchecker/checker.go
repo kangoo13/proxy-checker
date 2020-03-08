@@ -1,10 +1,12 @@
 package cfprxchecker
 
 import (
+	"context"
 	"github.com/gocolly/colly"
 	"github.com/gocolly/colly/extensions"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"strings"
 	"sync"
@@ -19,6 +21,16 @@ type Args struct {
 	TimeoutProxy          time.Duration
 	muBad                 sync.Mutex
 	muGood                sync.Mutex
+}
+
+// ProxyURL returns a proxy function (for use in a Transport)
+// that always returns the same URL.
+func ProxyURL(fixedURL *url.URL) func(*http.Request) (*url.URL, error) {
+	return func(pr *http.Request) (*url.URL, error) {
+		ctx := context.WithValue(pr.Context(), colly.ProxyURLKey, fixedURL.String())
+		*pr = *pr.WithContext(ctx)
+		return fixedURL, nil
+	}
 }
 
 func (a *Args) writeGoodProxy(proxy string) {
@@ -39,9 +51,7 @@ func (a *Args) writeGoodProxy(proxy string) {
 
 func (a *Args) writeBadProxy(proxy string) {
 	if proxy != "" {
-
 		var b strings.Builder
-
 		a.muBad.Lock()
 		defer a.muBad.Unlock()
 
@@ -54,13 +64,7 @@ func (a *Args) writeBadProxy(proxy string) {
 	}
 }
 
-func CheckProxiesAgainstCloudFlare(args *Args) {
-	// Rotate the proxies
-	rp, err := RoundRobinProxySwitcher(args.ProxyList...)
-	if err != nil {
-		log.Fatal(err)
-	}
-
+func NewCollector(args *Args) *colly.Collector {
 	// Instantiate default collector
 	c := colly.NewCollector(
 		colly.Async(true),
@@ -71,40 +75,55 @@ func CheckProxiesAgainstCloudFlare(args *Args) {
 	c.CacheDir = ""
 
 	c.WithTransport(&http.Transport{
-		Proxy:               rp,
 		DisableKeepAlives:   true,
 		MaxIdleConns:        100,
 		MaxIdleConnsPerHost: 100,
 	})
 
-	// Limit the maximum parallelism to 24
-	err = c.Limit(&colly.LimitRule{DomainGlob: "*", Parallelism: 24})
-
-	if err != nil {
-		log.Printf("error while doing c.Limit %s", err)
-	}
+	c.SetRequestTimeout(args.TimeoutProxy)
 
 	extensions.RandomUserAgent(c)
 
-	if args.BadProxiesOutputFile != nil {
-		c.OnError(func(response *colly.Response, err error) {
-			log.Printf("[DEBUG] Bad proxy found error status %d [%s] [%s]", response.StatusCode, response.Request.ProxyURL, err)
-			args.writeBadProxy(response.Request.ProxyURL)
-		})
+	return c
+}
+
+func CheckProxiesAgainstCloudFlare(args *Args) {
+	var onErrorCallback = func(response *colly.Response, err error) {
+		log.Printf("[DEBUG] Bad proxy found error status %d [%s] [%s]", response.StatusCode, response.Request.ProxyURL, err)
+		args.writeBadProxy(response.Request.ProxyURL)
 	}
 
-	c.OnResponse(func(response *colly.Response) {
+	var onResponseCallback = func(response *colly.Response) {
 		log.Printf("[DEBUG] Good proxy found [%s]", response.Request.ProxyURL)
 		args.writeGoodProxy(response.Request.ProxyURL)
-	})
+	}
+
+	var collectors []*colly.Collector
 
 	for _, proxy := range args.ProxyList {
 		log.Printf("[DEBUG] Doing %s", proxy)
-		if err = c.Visit(args.WebsiteToCrawl); err != nil {
-			log.Printf("Error happening doing Visit %s", err)
+		newCollector := NewCollector(args)
+		newCollector.OnResponse(onResponseCallback)
+		newCollector.OnError(onErrorCallback)
+		u, err := url.Parse(proxy)
+		if err != nil {
+			log.Printf("error while parseing proxy %s %s", proxy, err)
+			newCollector = nil
+			continue
 		}
+		newCollector.SetProxyFunc(ProxyURL(u))
+		if err = newCollector.Visit(args.WebsiteToCrawl); err != nil {
+			log.Printf("error happening doing Visit %s", err)
+			newCollector = nil
+			continue
+
+		}
+		collectors = append(collectors, newCollector)
+		log.Printf("[DEBUG] end Doing %v", len(collectors))
 	}
 
-	// Wait until threads are finished
-	c.Wait()
+	for _, collec := range collectors {
+		collec.Wait()
+	}
+
 }
