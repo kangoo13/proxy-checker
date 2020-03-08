@@ -3,7 +3,7 @@ package main
 import (
 	"bufio"
 	"github.com/alexflint/go-arg"
-	"github.com/kangoo13/cloudflare-proxy-ban-checker/cfprxchecker"
+	"github.com/kangoo13/proxy-checker/core"
 	"log"
 	"os"
 	"strings"
@@ -11,32 +11,32 @@ import (
 )
 
 func main() {
-	var args cfprxchecker.Args
-	var inputArgs struct {
-		Website         string `arg:"positional,required" help:"website to test proxy against cloudflare"`
-		ProxyList       string `arg:"positional,required" help:"path to the proxyList"`
-		GoodProxiesPath string `default:"good.txt" help:"path to the good proxies identified"`
-		BadProxiesPath  string `default:"bad.txt" help:"path to the bad proxies identified"`
-		TimeoutProxy    int64  `default:"5" help:"timeout proxy duration in seconds"`
+	var inputArgs = InputArgs{}
+
+	p := arg.MustParse(&inputArgs)
+
+	if inputArgs.CloudFlareBypass && inputArgs.WebsiteCloudFlare == "" {
+		p.Fail("If you wish to test bypass cloudflare, please provide website to test against protected by cloudflare with -w")
 	}
 
-	arg.MustParse(&inputArgs)
+	outputFile := OpenFile(inputArgs.GoodProxiesPath)
+	defer outputFile.Close()
+	workingProxies := core.CheckProxies(&core.ProxyChecker{
+		ProxyList:    FileToStringSlice(inputArgs.ProxyList),
+		TimeoutProxy: time.Duration(inputArgs.TimeoutProxy) * time.Second,
+		AvailableCheckers: core.AvailableCheckers{
+			CloudFlareBypass: inputArgs.CloudFlareBypass,
+			Basic:            true,
+		},
+		WebsiteCloudFlare: inputArgs.WebsiteCloudFlare,
+	})
 
-	if inputArgs.GoodProxiesPath != "" {
-		args.GoodProxiesOutputFile = OpenFile(inputArgs.GoodProxiesPath)
-		defer args.GoodProxiesOutputFile.Close()
+	datawriter := bufio.NewWriter(outputFile)
+
+	defer datawriter.Flush()
+	for _, data := range workingProxies {
+		_, _ = datawriter.WriteString(data + "\n")
 	}
-
-	if inputArgs.BadProxiesPath != "" {
-		args.BadProxiesOutputFile = OpenFile(inputArgs.BadProxiesPath)
-		defer args.BadProxiesOutputFile.Close()
-	}
-
-	args.WebsiteToCrawl = inputArgs.Website
-	args.ProxyList = FileToStringSlice(inputArgs.ProxyList)
-	args.TimeoutProxy = time.Duration(inputArgs.TimeoutProxy) * time.Second
-
-	cfprxchecker.CheckProxiesAgainstCloudFlare(&args)
 }
 
 func OpenFile(filePath string) *os.File {
@@ -71,5 +71,17 @@ func FileToStringSlice(filePath string) []string {
 	}
 
 	return fileTextLines
+}
 
+type InputArgs struct {
+	ProxyList       string `arg:"positional,required" help:"path to the proxyList"`
+	GoodProxiesPath string `arg:"positional" default:"good_proxies.txt" help:"path to the good proxies identified"`
+	TimeoutProxy    int64  `arg:"-t" default:"4" help:"timeout proxy duration in seconds"`
+	availableCheckers
+	WebsiteCloudFlare string `arg:"-w" help:"website to test proxy against cloudflare, needed if -cf"`
+}
+
+type availableCheckers struct {
+	CloudFlareBypass bool `arg:"-c" help:"if activated, check if proxy bypass cloudflare"`
+	Basic            bool `arg:"-b" default:"true" help:"if activated, simply checks if proxy is working"`
 }
